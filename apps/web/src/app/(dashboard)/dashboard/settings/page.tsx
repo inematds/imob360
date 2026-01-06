@@ -11,14 +11,12 @@ import { useToast } from '@/components/ui/use-toast';
 import {
   Settings,
   Zap,
-  Check,
-  X,
   Loader2,
   Building2,
   Users,
   CreditCard,
 } from 'lucide-react';
-import * as Switch from '@radix-ui/react-switch';
+import { Switch } from '@/components/ui/switch';
 
 const CATEGORY_LABELS: Record<string, string> = {
   INTEGRATION: 'Integracoes',
@@ -202,7 +200,7 @@ export default function SettingsPage() {
                           )}
                         </div>
                         <div className="flex items-center space-x-4">
-                          <Switch.Root
+                          <Switch
                             checked={feature.isEnabled}
                             onCheckedChange={(checked) => {
                               if (checked) {
@@ -212,10 +210,7 @@ export default function SettingsPage() {
                               }
                             }}
                             disabled={enableMutation.isPending || disableMutation.isPending}
-                            className="w-11 h-6 bg-gray-200 rounded-full relative data-[state=checked]:bg-primary transition-colors"
-                          >
-                            <Switch.Thumb className="block w-5 h-5 bg-white rounded-full shadow-lg transition-transform duration-100 translate-x-0.5 will-change-transform data-[state=checked]:translate-x-[22px]" />
-                          </Switch.Root>
+                          />
                         </div>
                       </div>
                     ))}

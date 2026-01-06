@@ -39,11 +39,15 @@ export default function LoginPage() {
     try {
       await login(data.email, data.password);
       router.push('/dashboard');
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Credenciais invalidas';
       toast({
         variant: 'destructive',
         title: 'Erro ao fazer login',
-        description: error.response?.data?.error?.message || 'Credenciais invalidas',
+        description: errorMessage,
       });
     } finally {
       setIsLoading(false);

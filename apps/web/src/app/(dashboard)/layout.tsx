@@ -20,7 +20,6 @@ import {
   MessageSquare,
   CreditCard,
   Plug,
-  ChevronDown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
