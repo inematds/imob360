@@ -1,0 +1,1049 @@
+// ============================================
+// IMOB360 - Schema Prisma
+// Sistema de Gestao Imobiliaria Multi-tenant
+// Com Feature Flags Modulares
+// ============================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum PropertyType {
+  APARTMENT
+  HOUSE
+  COMMERCIAL
+  LAND
+  RURAL
+  GARAGE
+  CONDO_UNIT
+}
+
+enum PropertyPurpose {
+  SALE
+  RENT
+  SALE_AND_RENT
+}
+
+enum PropertyStatus {
+  AVAILABLE
+  RESERVED
+  SOLD
+  RENTED
+  INACTIVE
+}
+
+enum PersonType {
+  OWNER
+  BUYER
+  TENANT
+  GUARANTOR
+  SYNDIC
+  BROKER
+}
+
+enum ContractType {
+  SALE
+  RENT
+  ADMINISTRATION
+}
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  RENEWED
+}
+
+enum TransactionType {
+  RENT_PAYMENT
+  CONDO_FEE
+  COMMISSION
+  OWNER_TRANSFER
+  IPTU
+  MAINTENANCE
+  OTHER
+}
+
+enum OccurrenceStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CANCELLED
+}
+
+enum LeadStage {
+  NEW
+  CONTACTED
+  QUALIFIED
+  VISIT_SCHEDULED
+  VISITED
+  PROPOSAL
+  NEGOTIATION
+  WON
+  LOST
+}
+
+enum PlanType {
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+// ============================================
+// FEATURE FLAGS - Sistema Modular de Custos
+// ============================================
+
+model FeatureDefinition {
+  id          String   @id @default(cuid())
+  code        String   @unique // ex: GOOGLE_MAPS, WHATSAPP, AI_LEAD_SCORING
+  name        String
+  description String?
+  category    String   // INTEGRATION, AI, PORTAL, AUTOMATION
+
+  // Pricing
+  monthlyPrice Decimal @default(0) @db.Decimal(10,2) // Custo adicional
+  isIncludedInPlan Json @default("{}") // {"STARTER": false, "PROFESSIONAL": true, "ENTERPRISE": true}
+
+  // Status
+  isActive    Boolean  @default(true)
+  isBeta      Boolean  @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenantFeatures TenantFeature[]
+
+  @@map("feature_definitions")
+}
+
+model TenantFeature {
+  id              String   @id @default(cuid())
+  realEstateId    String
+  featureId       String
+
+  // Status
+  isEnabled       Boolean  @default(false)
+  enabledAt       DateTime?
+  disabledAt      DateTime?
+
+  // Usage tracking (para cobranca por uso)
+  usageCount      Int      @default(0)
+  usageLimit      Int?     // null = ilimitado
+  lastUsedAt      DateTime?
+
+  // Config especifica da feature
+  config          Json     @default("{}")
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  realEstate      RealEstate       @relation(fields: [realEstateId], references: [id], onDelete: Cascade)
+  feature         FeatureDefinition @relation(fields: [featureId], references: [id])
+
+  @@unique([realEstateId, featureId])
+  @@map("tenant_features")
+}
+
+// ============================================
+// TENANT (Imobiliaria)
+// ============================================
+
+model RealEstate {
+  id             String     @id @default(cuid())
+  name           String
+  slug           String     @unique
+  cnpj           String     @unique
+  phone          String
+  email          String?
+
+  // Logo e Branding
+  logoUrl        String?
+  primaryColor   String     @default("#3B82F6")
+  secondaryColor String     @default("#1E40AF")
+
+  // Endereco
+  address        String?
+  number         String?
+  complement     String?
+  neighborhood   String?
+  city           String?
+  state          String?
+  zipCode        String?
+
+  // Plano e Billing
+  planType       PlanType   @default(STARTER)
+  planStartedAt  DateTime   @default(now())
+  planExpiresAt  DateTime?
+  trialEndsAt    DateTime?
+  isActive       Boolean    @default(true)
+
+  // Limites do plano
+  maxUsers       Int        @default(3)
+  maxProperties  Int        @default(100)
+
+  // WhatsApp
+  whatsappInstanceId  String?
+  whatsappConnected   Boolean @default(false)
+  whatsappNumber      String?
+
+  // Site white-label
+  customDomain   String?    @unique
+  siteEnabled    Boolean    @default(true)
+
+  // Configuracoes gerais
+  settings       Json       @default("{}")
+
+  // Timestamps
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  // Relations
+  users          User[]
+  properties     Property[]
+  people         Person[]
+  contracts      Contract[]
+  condominiums   Condominium[]
+  transactions   Transaction[]
+  leads          Lead[]
+  visits         Visit[]
+  messages       WhatsAppMessage[]
+  templates      MessageTemplate[]
+  features       TenantFeature[]
+  apiKeys        ApiKey[]
+
+  @@map("real_estates")
+}
+
+// ============================================
+// USUARIOS
+// ============================================
+
+model User {
+  id             String   @id @default(cuid())
+  realEstateId   String
+  name           String
+  email          String
+  phone          String?
+  role           String   @default("BROKER") // ADMIN, MANAGER, BROKER
+  creci          String?
+  avatarUrl      String?
+  isActive       Boolean  @default(true)
+
+  // Auth
+  passwordHash   String?
+  otpCode        String?
+  otpExpiresAt   DateTime?
+  lastLoginAt    DateTime?
+
+  // Commission
+  commissionRate Decimal? @db.Decimal(5,2)
+
+  // Preferences
+  preferences    Json     @default("{}")
+
+  // Timestamps
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  realEstate     RealEstate @relation(fields: [realEstateId], references: [id], onDelete: Cascade)
+  propertiesResponsible Property[] @relation("ResponsibleBroker")
+  visits         Visit[]
+  contracts      Contract[] @relation("ContractBroker")
+  commissions    Commission[]
+  leadsAssigned  Lead[]     @relation("AssignedBroker")
+  sessions       Session[]
+
+  @@unique([realEstateId, email])
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  token        String   @unique
+  refreshToken String?  @unique
+  expiresAt    DateTime
+  ipAddress    String?
+  userAgent    String?
+
+  createdAt    DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model ApiKey {
+  id           String   @id @default(cuid())
+  realEstateId String
+  name         String
+  key          String   @unique
+  permissions  String[] // ["read:properties", "write:leads"]
+  isActive     Boolean  @default(true)
+  lastUsedAt   DateTime?
+  expiresAt    DateTime?
+
+  createdAt    DateTime @default(now())
+
+  realEstate   RealEstate @relation(fields: [realEstateId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+// ============================================
+// IMOVEIS
+// ============================================
+
+model Property {
+  id             String         @id @default(cuid())
+  realEstateId   String
+  ownerId        String
+  responsibleId  String?
+
+  // Identificacao
+  code           String
+  title          String
+  description    String?
+
+  // Tipo e proposito
+  type           PropertyType
+  purpose        PropertyPurpose
+  status         PropertyStatus @default(AVAILABLE)
+
+  // Localizacao
+  address        String
+  number         String?
+  complement     String?
+  neighborhood   String
+  city           String
+  state          String
+  zipCode        String
+  latitude       Decimal?       @db.Decimal(10,8)
+  longitude      Decimal?       @db.Decimal(11,8)
+
+  // Caracteristicas
+  totalArea      Decimal?       @db.Decimal(10,2)
+  builtArea      Decimal?       @db.Decimal(10,2)
+  bedrooms       Int?
+  suites         Int?
+  bathrooms      Int?
+  parkingSpaces  Int?
+  floor          Int?
+  hasElevator    Boolean        @default(false)
+  hasFurniture   Boolean        @default(false)
+  acceptsPets    Boolean        @default(false)
+  features       String[]       // Pool, gym, etc
+
+  // Valores
+  salePrice      Decimal?       @db.Decimal(12,2)
+  rentPrice      Decimal?       @db.Decimal(10,2)
+  condoFee       Decimal?       @db.Decimal(10,2)
+  iptuAnnual     Decimal?       @db.Decimal(10,2)
+
+  // Precificacao IA (feature: AI_PRICING)
+  suggestedSalePrice Decimal?   @db.Decimal(12,2)
+  suggestedRentPrice Decimal?   @db.Decimal(10,2)
+  priceConfidence    Decimal?   @db.Decimal(5,2) // 0-100%
+  lastPriceAnalysis  DateTime?
+
+  // Media
+  images         String[]
+  mainImageIndex Int            @default(0)
+  videoUrl       String?
+  virtualTourUrl String?        // Matterport embed
+
+  // Condominio (se aplicavel)
+  condominiumId  String?
+  unitNumber     String?
+
+  // SEO/Marketing
+  slug           String?
+  metaTitle      String?
+  metaDescription String?
+  publishOnSite  Boolean        @default(true)
+  publishOnPortals Boolean      @default(true)
+  portalIds      Json           @default("{}") // {"zap": "123", "olx": "456"}
+  highlightUntil DateTime?
+
+  // Stats
+  viewCount      Int            @default(0)
+  leadCount      Int            @default(0)
+  visitCount     Int            @default(0)
+
+  // Timestamps
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  publishedAt    DateTime?
+  soldAt         DateTime?
+  rentedAt       DateTime?
+
+  // Relations
+  realEstate     RealEstate     @relation(fields: [realEstateId], references: [id], onDelete: Cascade)
+  owner          Person         @relation("PropertyOwner", fields: [ownerId], references: [id])
+  responsible    User?          @relation("ResponsibleBroker", fields: [responsibleId], references: [id])
+  condominium    Condominium?   @relation(fields: [condominiumId], references: [id])
+  visits         Visit[]
+  contracts      Contract[]
+  leads          Lead[]
+
+  @@unique([realEstateId, code])
+  @@index([realEstateId, status])
+  @@index([city, neighborhood])
+  @@index([type, purpose, status])
+  @@index([salePrice])
+  @@index([rentPrice])
+  @@map("properties")
+}
+
+// ============================================
+// PESSOAS (CRM)
+// ============================================
+
+model Person {
+  id             String       @id @default(cuid())
+  realEstateId   String
+  types          PersonType[]
+
+  // Dados pessoais
+  name           String
+  cpfCnpj        String?
+  email          String?
+  phone          String
+  phone2         String?
+
+  // Endereco
+  address        String?
+  number         String?
+  complement     String?
+  neighborhood   String?
+  city           String?
+  state          String?
+  zipCode        String?
+
+  // Documentos
+  rgNumber       String?
+  rgIssuer       String?
+  birthDate      DateTime?
+  maritalStatus  String?
+  profession     String?
+  company        String?
+  monthlyIncome  Decimal?     @db.Decimal(10,2)
+
+  // Preferencias de busca (para compradores)
+  searchPreferences Json?     // {minPrice, maxPrice, neighborhoods, types, etc}
+
+  // Lead Scoring (feature: AI_LEAD_SCORING)
+  leadScore      Int?         // 0-100
+  leadScoreFactors Json?      // {propertyViews: 20, emailOpens: 15, ...}
+  lastScoreUpdate DateTime?
+
+  // Score de credito
+  creditScore    Int?
+  creditAnalysisDate DateTime?
+
+  // Tags e notas
+  tags           String[]
+  notes          String?
+
+  // Origem
+  source         String?      // SITE, WHATSAPP, PORTAL_ZAP, etc
+
+  // Timestamps
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  // Relations
+  realEstate     RealEstate   @relation(fields: [realEstateId], references: [id], onDelete: Cascade)
+  propertiesOwned Property[]  @relation("PropertyOwner")
+  contractsAsBuyer Contract[] @relation("ContractBuyer")
+  contractsAsTenant Contract[] @relation("ContractTenant")
+  contractsAsGuarantor Contract[] @relation("ContractGuarantor")
+  visits         Visit[]
+  leads          Lead[]
+  condoUnits     CondoUnit[]  @relation("UnitResident")
+
+  @@unique([realEstateId, cpfCnpj])
+  @@index([realEstateId, phone])
+  @@index([realEstateId, email])
+  @@map("people")
+}
+
+// ============================================
+// LEADS E VISITAS
+// ============================================
+
+model Lead {
+  id             String     @id @default(cuid())
+  realEstateId   String
+  propertyId     String?
+  personId       String?
+  assignedToId   String?
+
+  // Origem
+  source         String     // SITE, WHATSAPP, PORTAL_ZAP, PORTAL_OLX, REFERRAL
+  sourceDetails  Json?      // {campaign: "...", utm: "..."}
+
+  // Dados do lead (se pessoa nao cadastrada)
+  name           String?
+  phone          String
+  email          String?
+  message        String?
+
+  // Status do funil
+  stage          LeadStage  @default(NEW)
+  lostReason     String?
+  wonValue       Decimal?   @db.Decimal(12,2)
+
+  // Lead Scoring (feature: AI_LEAD_SCORING)
+  score          Int?       // 0-100
+  scoreFactors   Json?
+  temperature    String?    // HOT, WARM, COLD
+
+  // Interacoes
+  lastContactAt  DateTime?
+  nextFollowUpAt DateTime?
+  contactCount   Int        @default(0)
+
+  // Timestamps
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  contactedAt    DateTime?
+  convertedAt    DateTime?
+
+  // Relations
+  realEstate     RealEstate @relation(fields: [realEstateId], references: [id], onDelete: Cascade)
+  property       Property?  @relation(fields: [propertyId], references: [id])
+  person         Person?    @relation(fields: [personId], references: [id])
+  assignedTo     User?      @relation("AssignedBroker", fields: [assignedToId], references: [id])
+  visits         Visit[]
+
+  @@index([realEstateId, stage])
+  @@index([phone])
+  @@index([score])
+  @@map("leads")
+}
+
+model Visit {
+  id             String   @id @default(cuid())
+  realEstateId   String
+  propertyId     String
+  personId       String?
+  leadId         String?
+  brokerId       String
+
+  // Agendamento
+  scheduledAt    DateTime
+  duration       Int      @default(30)
+
+  // Status
+  status         String   @default("SCHEDULED") // SCHEDULED, CONFIRMED, DONE, CANCELLED, NO_SHOW
+
+  // Confirmacao (feature: WHATSAPP)
+  confirmationSentAt DateTime?
+  confirmedAt    DateTime?
+  reminderSentAt DateTime?
+
+  // Feedback
+  feedback       String?
+  interestLevel  Int?     // 1-5
+  notes          String?
+
+  // Timestamps
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  completedAt    DateTime?
+
+  // Relations
+  realEstate     RealEstate @relation(fields: [realEstateId], references: [id], onDelete: Cascade)
+  property       Property   @relation(fields: [propertyId], references: [id])
+  person         Person?    @relation(fields: [personId], references: [id])
+  lead           Lead?      @relation(fields: [leadId], references: [id])
+  broker         User       @relation(fields: [brokerId], references: [id])
+
+  @@index([propertyId])
+  @@index([brokerId, scheduledAt])
+  @@map("visits")
+}
+
+// ============================================
+// CONTRATOS
+// ============================================
+
+model Contract {
+  id             String         @id @default(cuid())
+  realEstateId   String
+  propertyId     String
+  type           ContractType
+  status         ContractStatus @default(DRAFT)
+
+  // Partes
+  buyerTenantId  String
+  guarantorId    String?
+  brokerId       String?
+
+  // Valores
+  value          Decimal        @db.Decimal(12,2)
+  deposit        Decimal?       @db.Decimal(10,2) // Caucao
+  commissionRate Decimal?       @db.Decimal(5,2)
+  commissionValue Decimal?      @db.Decimal(10,2)
+
+  // Datas
+  startDate      DateTime
+  endDate        DateTime?
+  signedAt       DateTime?
+
+  // Pagamento (aluguel)
+  dueDay         Int?
+  adjustmentIndex String?       // IGPM, IPCA, etc
+
+  // Assinatura Digital (feature: DIGITAL_SIGNATURE)
+  documentUrl    String?
+  signatureRequestId String?    // ID no Clicksign
+  signatureStatus String?       // PENDING, SIGNED, EXPIRED
+
+  // Timestamps
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  // Relations
+  realEstate     RealEstate     @relation(fields: [realEstateId], references: [id], onDelete: Cascade)
+  property       Property       @relation(fields: [propertyId], references: [id])
+  buyerTenant    Person         @relation("ContractBuyer", fields: [buyerTenantId], references: [id])
+  guarantor      Person?        @relation("ContractGuarantor", fields: [guarantorId], references: [id])
+  broker         User?          @relation("ContractBroker", fields: [brokerId], references: [id])
+  payments       RentPayment[]
+
+  @@index([realEstateId, status])
+  @@map("contracts")
+}
+
+model RentPayment {
+  id             String   @id @default(cuid())
+  contractId     String
+
+  // Referencia
+  referenceMonth Int
+  referenceYear  Int
+
+  // Valores
+  rentValue      Decimal  @db.Decimal(10,2)
+  condoValue     Decimal  @default(0) @db.Decimal(10,2)
+  iptuValue      Decimal  @default(0) @db.Decimal(10,2)
+  otherCharges   Decimal  @default(0) @db.Decimal(10,2)
+  discount       Decimal  @default(0) @db.Decimal(10,2)
+  lateFee        Decimal  @default(0) @db.Decimal(10,2)
+  totalValue     Decimal  @db.Decimal(10,2)
+
+  // Vencimento e pagamento
+  dueDate        DateTime
+  paidAt         DateTime?
+  paidValue      Decimal? @db.Decimal(10,2)
+  paymentMethod  String?  // PIX, BOLETO, TRANSFER
+
+  // Boleto
+  boletoUrl      String?
+  boletoBarcode  String?
+  boletoId       String?
+
+  // PIX (feature: PIX_PAYMENT)
+  pixCode        String?
+  pixQrCode      String?
+
+  // Status
+  status         String   @default("PENDING") // PENDING, PAID, OVERDUE, CANCELLED
+
+  // Notificacoes (feature: WHATSAPP)
+  reminderSentAt DateTime?
+  overdueNotifiedAt DateTime?
+
+  // Timestamps
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  contract       Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, referenceMonth, referenceYear])
+  @@index([dueDate, status])
+  @@map("rent_payments")
+}
+
+// ============================================
+// CONDOMINIOS
+// ============================================
+
+model Condominium {
+  id             String   @id @default(cuid())
+  realEstateId   String
+
+  // Dados
+  name           String
+  cnpj           String?
+  address        String
+  number         String?
+  neighborhood   String?
+  city           String
+  state          String
+  zipCode        String?
+
+  // Contato
+  phone          String?
+  email          String?
+  syndicId       String?
+
+  // Configuracoes
+  totalUnits     Int
+  commonAreas    String[]
+
+  // Financeiro
+  defaultCondoFee Decimal? @db.Decimal(10,2)
+  paymentDay     Int      @default(10)
+
+  // Timestamps
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  realEstate     RealEstate     @relation(fields: [realEstateId], references: [id], onDelete: Cascade)
+  units          CondoUnit[]
+  properties     Property[]
+  announcements  Announcement[]
+  assemblies     Assembly[]
+  reservations   AreaReservation[]
+  occurrences    Occurrence[]
+
+  @@index([realEstateId])
+  @@map("condominiums")
+}
+
+model CondoUnit {
+  id             String   @id @default(cuid())
+  condominiumId  String
+
+  // Identificacao
+  block          String?
+  number         String
+  floor          Int?
+
+  // Morador
+  residentId     String?
+  residentType   String?  // OWNER, TENANT
+
+  // Contato
+  phone          String?
+  email          String?
+
+  // Financeiro
+  condoFee       Decimal? @db.Decimal(10,2)
+
+  // Timestamps
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  condominium    Condominium @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
+  resident       Person?     @relation("UnitResident", fields: [residentId], references: [id])
+  payments       CondoPayment[]
+
+  @@unique([condominiumId, block, number])
+  @@map("condo_units")
+}
+
+model CondoPayment {
+  id             String   @id @default(cuid())
+  unitId         String
+
+  // Referencia
+  referenceMonth Int
+  referenceYear  Int
+
+  // Valores
+  condoFee       Decimal  @db.Decimal(10,2)
+  extraCharges   Decimal  @default(0) @db.Decimal(10,2)
+  discount       Decimal  @default(0) @db.Decimal(10,2)
+  lateFee        Decimal  @default(0) @db.Decimal(10,2)
+  totalValue     Decimal  @db.Decimal(10,2)
+
+  // Vencimento
+  dueDate        DateTime
+  paidAt         DateTime?
+  paidValue      Decimal? @db.Decimal(10,2)
+
+  // Status
+  status         String   @default("PENDING")
+
+  // Boleto/PIX
+  boletoUrl      String?
+  pixCode        String?
+
+  // Relations
+  unit           CondoUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@unique([unitId, referenceMonth, referenceYear])
+  @@map("condo_payments")
+}
+
+model Announcement {
+  id             String   @id @default(cuid())
+  condominiumId  String
+
+  title          String
+  content        String
+  priority       String   @default("NORMAL") // LOW, NORMAL, HIGH, URGENT
+
+  // Envio (feature: WHATSAPP)
+  sendViaWhatsApp Boolean @default(false)
+  sentAt         DateTime?
+
+  // Timestamps
+  createdAt      DateTime @default(now())
+
+  // Relations
+  condominium    Condominium @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
+
+  @@map("announcements")
+}
+
+model Assembly {
+  id             String   @id @default(cuid())
+  condominiumId  String
+
+  title          String
+  description    String?
+  scheduledAt    DateTime
+  location       String?
+  isOnline       Boolean  @default(false)
+  meetingUrl     String?
+
+  // Pauta
+  agenda         String[]
+
+  // Ata
+  minutesUrl     String?
+
+  // Status
+  status         String   @default("SCHEDULED")
+
+  // Relations
+  condominium    Condominium @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
+
+  @@map("assemblies")
+}
+
+model AreaReservation {
+  id             String   @id @default(cuid())
+  condominiumId  String
+  unitId         String
+
+  area           String
+  date           DateTime @db.Date
+  startTime      String
+  endTime        String
+
+  // Status
+  status         String   @default("PENDING")
+
+  // Timestamps
+  createdAt      DateTime @default(now())
+
+  // Relations
+  condominium    Condominium @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
+
+  @@index([condominiumId, date])
+  @@map("area_reservations")
+}
+
+model Occurrence {
+  id             String           @id @default(cuid())
+  condominiumId  String
+  unitId         String?
+
+  title          String
+  description    String
+  category       String           // MAINTENANCE, NOISE, SECURITY, OTHER
+  status         OccurrenceStatus @default(OPEN)
+  priority       String           @default("NORMAL")
+
+  // Fotos
+  images         String[]
+
+  // Resolucao
+  resolution     String?
+  resolvedAt     DateTime?
+  resolvedBy     String?
+
+  // Timestamps
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  condominium    Condominium @relation(fields: [condominiumId], references: [id], onDelete: Cascade)
+
+  @@index([condominiumId, status])
+  @@map("occurrences")
+}
+
+// ============================================
+// FINANCEIRO
+// ============================================
+
+model Transaction {
+  id             String          @id @default(cuid())
+  realEstateId   String
+  type           TransactionType
+
+  // Valores
+  amount         Decimal         @db.Decimal(10,2)
+
+  // Referencia
+  contractId     String?
+  propertyId     String?
+  description    String?
+
+  // Status
+  status         String          @default("PENDING")
+
+  // Datas
+  dueDate        DateTime?
+  paidAt         DateTime?
+
+  // Timestamps
+  createdAt      DateTime        @default(now())
+
+  // Relations
+  realEstate     RealEstate      @relation(fields: [realEstateId], references: [id], onDelete: Cascade)
+
+  @@index([realEstateId, type])
+  @@map("transactions")
+}
+
+model Commission {
+  id             String   @id @default(cuid())
+  userId         String
+  contractId     String?
+
+  // Valores
+  saleValue      Decimal  @db.Decimal(12,2)
+  commissionRate Decimal  @db.Decimal(5,2)
+  commissionValue Decimal @db.Decimal(10,2)
+
+  // Status
+  status         String   @default("PENDING")
+  paidAt         DateTime?
+
+  // Timestamps
+  createdAt      DateTime @default(now())
+
+  // Relations
+  user           User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("commissions")
+}
+
+// ============================================
+// WHATSAPP
+// ============================================
+
+model WhatsAppMessage {
+  id             String   @id @default(cuid())
+  realEstateId   String
+
+  // WhatsApp
+  remoteJid      String
+  messageId      String?  @unique
+  instanceId     String?
+
+  // Conteudo
+  direction      String   // INBOUND, OUTBOUND
+  type           String   // TEXT, IMAGE, DOCUMENT, AUDIO, VIDEO
+  content        String
+  mediaUrl       String?
+
+  // Contexto
+  leadId         String?
+  personId       String?
+  propertyId     String?
+
+  // Status
+  status         String   @default("SENT") // SENT, DELIVERED, READ, FAILED
+
+  // Automacao
+  isAutomated    Boolean  @default(false)
+  templateId     String?
+
+  // Timestamps
+  createdAt      DateTime @default(now())
+
+  // Relations
+  realEstate     RealEstate @relation(fields: [realEstateId], references: [id], onDelete: Cascade)
+
+  @@index([realEstateId])
+  @@index([remoteJid])
+  @@map("whatsapp_messages")
+}
+
+model MessageTemplate {
+  id             String   @id @default(cuid())
+  realEstateId   String
+
+  name           String
+  type           String   // WELCOME, PROPERTY_SHARE, VISIT_REMINDER, PAYMENT_REMINDER, etc
+  content        String
+  variables      String[] // {{name}}, {{property.title}}, etc
+
+  // Media
+  mediaUrl       String?
+  mediaType      String?
+
+  isActive       Boolean  @default(true)
+
+  // Relations
+  realEstate     RealEstate @relation(fields: [realEstateId], references: [id], onDelete: Cascade)
+
+  @@unique([realEstateId, type])
+  @@map("message_templates")
+}
+
+// ============================================
+// PORTAL INTEGRATIONS
+// ============================================
+
+model PortalSync {
+  id             String   @id @default(cuid())
+  realEstateId   String
+  portal         String   // ZAP, VIVAREAL, OLX
+
+  // Credenciais
+  credentials    Json     @default("{}")
+
+  // Status
+  isActive       Boolean  @default(true)
+  lastSyncAt     DateTime?
+  lastSyncStatus String?
+  lastSyncError  String?
+
+  // Stats
+  propertiesPublished Int @default(0)
+  leadsReceived  Int      @default(0)
+
+  // Timestamps
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([realEstateId, portal])
+  @@map("portal_syncs")
+}
